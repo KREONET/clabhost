@@ -12,17 +12,6 @@ curl -fsSL https://raw.githubusercontent.com/kreonet/clabhost/main/install.sh | 
 
 containerlab, clab-api-server, code-server, ufw-docker 를 설치하고 웹 스택까지 시작합니다. 재실행해도 안전합니다. 자세한 내용은 [설치 상세](docs/install.ko.md)를 보십시오.
 
-스크립트를 먼저 읽고 실행하는 쪽을 권합니다. 하는 일이 같습니다.
-
-```sh
-git clone https://github.com/kreonet/clabhost /opt/clabhost
-cd /opt/clabhost
-less install.sh
-sudo ./install.sh install
-```
-
-`docker compose up -d` 만으로도 포털, `/clab/`, `/grafana/` 는 동작합니다. 다만 **편집기는 `install.sh` 가 설치합니다** — 호스트에 설치되는 systemd 서비스이고 compose 에 없습니다. 이유는 [편집기를 컨테이너에 두지 않는 이유](docs/install.ko.md#편집기를-컨테이너에-두지-않는-이유)를 보십시오. 그때까지 `/code` 는 준비 중 화면입니다.
-
 설치가 끝나면 `http://SERVER_IP/` 로 접속해 서버 계정으로 로그인합니다. 처음 실행은 편집기 확장을 내려받느라 몇 분 걸립니다.
 
 
@@ -72,9 +61,7 @@ docker compose logs -f caddy
 journalctl -u clabhost-code -f
 ```
 
-데이터는 네임드 볼륨이 아니라 `data/` 아래 평범한 디렉터리입니다. 백업은 `tar czf backup.tgz -C /opt/clabhost data`, 초기화는 `rm -rf data/` 입니다. **`docker compose down -v` 로는 지워지지 않고, `git clean -xfd` 로는 지워집니다** — 인증서가 거기 있습니다. [데이터는 어디에 있나](docs/install.ko.md#데이터는-어디에-있나)
-
-언인스톨러는 없습니다. 랩 호스트를 없애는 건 설치를 되짚는 것보다 VM 을 다시 만드는 편이 빠르고 확실하며, 언인스톨러는 잘못된 안심을 줍니다 — 랩 이미지, 하이퍼바이저 방화벽 규칙, DNS 레코드는 모두 이 호스트 밖에 있습니다.
+언인스톨러는 없습니다. 랩 호스트를 없애는 건 설치를 되짚는 것보다 VM 을 다시 만드는 편이 빠르고 확실하며, 언인스톨러는 잘못된 안심을 줍니다.
 
 
 ## 유의사항
@@ -86,8 +73,6 @@ journalctl -u clabhost-code -f
 
 * **호스트 포트 충돌:** [Streaming Telemetry Lab](https://github.com/srl-labs/srl-telemetry-lab)과 같은 containerlab 공식 예제들은 가상 랩의 정보를 호스트의 특정 포트(예: 3000번)에 직접 매핑하여 선점합니다. 이로 인해 동일한 호스트에서 여러 랩을 동시에 실행할 수 없습니다.
 * **사용자 격리(Isolation) 불가:** containerlab에서 [링크 속성(loss, delay 등)을 설정](https://containerlab.dev/manual/impairments/)하기 위해 사용하는 `netem`은 리눅스 시스템의 root 권한을 필요로 합니다. 이로 인해 사용자별 권한 격리가 불가능하며, 다른 사용자의 랩 환경을 보거나 제어할 수 있게 됩니다.
-
-계정을 여러 개 만들 수는 있습니다. 다만 편집기는 하나이고 작업 공간도 하나이므로, **서로 신뢰하는 사람들이 함께 쓰는 실습 서버**로 취급하십시오.
 
 편집기는 `CLAB_USER` 계정으로 호스트에서 동작합니다. 그 계정은 `docker`·`clab_admins` 소속이므로 **편집기 터미널은 실질적으로 호스트 root 입니다.** 그래야 랩을 배포하고 `netem` 으로 링크에 지연을 걸 수 있습니다.
 
