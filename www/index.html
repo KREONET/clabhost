@@ -1,0 +1,389 @@
+<!doctype html>
+<!--
+  Portal shell.
+
+  A left rail that switches between the apps, and a frame that holds the
+  selected one. The URL carries the choice (/?app=code), so a link to a specific
+  app is shareable and the back button works.
+
+  Every app is also reachable on its own path without this shell -- /clab/,
+  /grafana/, /code/ -- which is what you want for a bookmark, a second monitor,
+  or when a frame gets in the way. The rail links to those directly.
+
+  The apps are same-origin, so the frame is not a sandbox and nothing here is a
+  security boundary; Caddy's forward_auth is. What this page adds is navigation.
+
+  The rail contents live in apps.js so they can be edited without touching this
+  file.
+
+  Dark only. This sits in front of Grafana and VS Code, both of which are dark
+  here, and a shell that flips with the OS setting would not match them.
+
+  No framework and no external assets: this has to work on a host with no egress.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>clabhost</title>
+<link rel="icon" type="image/svg+xml" href="/containerlab.svg">
+<style>
+  :root {
+    --steel-900:#161c24; --steel-800:#1d252f; --steel-700:#2a3542;
+    --steel-500:#4a5b6e; --steel-400:#6b7d92;
+    --ink-100:#e6ecf2; --ink-300:#9fb0c2;
+    --signal:#3d9be9; --ok:#4bb888; --down:#d4674f;
+    --rail:232px; --rail-collapsed:56px;
+  }
+  * { box-sizing:border-box }
+  html, body { margin:0; height:100%; overflow:hidden;
+    background:var(--steel-900); color:var(--ink-100);
+    font:14px/1.5 ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif;
+    -webkit-font-smoothing:antialiased }
+
+  .shell { display:grid; grid-template-columns:var(--rail) 1fr; height:100%;
+           transition:grid-template-columns .15s ease }
+  .shell[data-collapsed="true"] { grid-template-columns:var(--rail-collapsed) 1fr }
+
+  .rail { background:var(--steel-800); border-right:1px solid var(--steel-700);
+          display:flex; flex-direction:column; min-width:0 }
+  .rail-head { display:flex; align-items:center; gap:9px; padding:14px 12px;
+               border-bottom:1px solid var(--steel-700); min-height:56px }
+  .rail-head img { flex:0 0 auto; height:22px; width:22px }
+  .wordmark { font-size:13.5px; font-weight:600; letter-spacing:.02em; white-space:nowrap;
+              overflow:hidden }
+
+  /* Chevrons rather than an arrow: the direction reads as "push the rail aside"
+     and back, which is what the control does. */
+  .toggle { margin-left:auto; background:none; border:0; color:var(--steel-400);
+            cursor:pointer; padding:2px 5px; border-radius:4px;
+            font:15px/1 ui-monospace,SFMono-Regular,Menlo,monospace }
+  .toggle:hover { color:var(--ink-100); background:var(--steel-700) }
+  .toggle:focus-visible { outline:2px solid var(--signal); outline-offset:1px }
+
+  .nav { padding:8px 6px; display:flex; flex-direction:column; gap:1px }
+  .nav a { display:flex; align-items:center; gap:10px; padding:8px 10px; border-radius:5px;
+           color:var(--ink-300); text-decoration:none; font-size:13.5px; position:relative;
+           white-space:nowrap; overflow:hidden }
+  .nav a:hover { background:var(--steel-700); color:var(--ink-100) }
+  .nav a:focus-visible { outline:2px solid var(--signal); outline-offset:-2px }
+  .nav a[aria-current="page"] { background:var(--steel-700); color:var(--ink-100);
+                                font-weight:600 }
+  .nav a[aria-current="page"]::before { content:""; position:absolute; left:0; top:7px;
+    bottom:7px; width:2px; background:var(--signal); border-radius:0 2px 2px 0 }
+  .nav svg { flex:0 0 17px }
+  .nav .label { flex:1 1 auto; overflow:hidden; text-overflow:ellipsis }
+  .dot { flex:0 0 6px; width:6px; height:6px; border-radius:50%; background:var(--steel-700) }
+  .dot[data-state="up"] { background:var(--ok) }
+  .dot[data-state="down"] { background:var(--down) }
+
+  .rail-foot { margin-top:auto; padding:9px 12px 11px; border-top:1px solid var(--steel-700);
+               font-size:11.5px; color:var(--steel-400); white-space:nowrap; overflow:hidden }
+  .rail-foot .links { display:flex; flex-direction:column; margin:0 0 7px }
+  .rail-foot .links a { padding:4px 0 }
+  .rail-foot .me { display:flex; align-items:center; gap:8px }
+  .rail-foot .who { flex:1 1 auto; overflow:hidden; text-overflow:ellipsis;
+                    color:var(--ink-100) }
+  .rail-foot a { display:flex; align-items:center; gap:8px;
+                 color:var(--steel-400); text-decoration:none }
+  .rail-foot a:hover { color:var(--ink-100) }
+  .rail-foot a:focus-visible { outline:2px solid var(--signal); outline-offset:2px;
+                               border-radius:3px }
+  .rail-foot svg { flex:0 0 14px }
+
+  .shell[data-collapsed="true"] .wordmark,
+  .shell[data-collapsed="true"] .nav .label,
+  .shell[data-collapsed="true"] .nav .dot,
+  .shell[data-collapsed="true"] .rail-foot { display:none }
+  .shell[data-collapsed="true"] .nav a { justify-content:center; padding:9px 0 }
+  .shell[data-collapsed="true"] .rail-head { justify-content:center; padding:14px 0 }
+  .shell[data-collapsed="true"] .rail-head img { display:none }
+
+  .stage { position:relative; min-width:0; background:var(--steel-900) }
+  .bar { height:32px; display:flex; align-items:center; gap:10px; padding:0 12px;
+         background:var(--steel-800); border-bottom:1px solid var(--steel-700);
+         font-size:12px; color:var(--steel-400) }
+  .bar .spacer { flex:1 }
+  .bar a { color:var(--steel-400); text-decoration:none; padding:3px 8px;
+           border:1px solid var(--steel-700); border-radius:4px }
+  .bar a:hover { color:var(--ink-100) }
+  iframe { display:block; width:100%; height:calc(100% - 32px); border:0;
+           background:var(--steel-900) }
+
+  .note { position:absolute; inset:32px 0 0 0; display:none; place-content:center;
+          text-align:center; padding:32px }
+  .note[data-show="true"] { display:grid }
+  .note h2 { font-size:15px; font-weight:600; margin:0 0 8px }
+  .note p { font-size:13px; color:var(--ink-300); margin:0 0 18px; line-height:1.7 }
+  .note code { font:12px ui-monospace,SFMono-Regular,Menlo,monospace;
+               background:var(--steel-700); color:var(--ink-100); padding:1px 5px;
+               border-radius:3px }
+  .note a.btn { display:inline-block; background:var(--signal); color:#fff;
+                text-decoration:none; padding:8px 16px; border-radius:5px; font-size:13px }
+
+  @media (max-width:640px) {
+    .shell { grid-template-columns:var(--rail-collapsed) 1fr }
+    .wordmark, .nav .label, .nav .dot, .rail-foot { display:none }
+  }
+  @media (prefers-reduced-motion: reduce) { .shell { transition:none } }
+</style>
+</head>
+<body>
+<div class="shell" id="shell">
+
+  <nav class="rail" aria-label="Applications">
+    <div class="rail-head">
+      <img src="/containerlab.svg" alt="">
+      <div class="wordmark">clabhost</div>
+      <button class="toggle" id="toggle" type="button"
+              aria-label="Collapse the rail" aria-expanded="true">&#171;</button>
+    </div>
+
+    <div class="nav" id="nav"></div>
+
+    <div class="rail-foot">
+      <!-- Off-host links, so they are the only ones here that need a new tab. -->
+      <div class="links">
+        <a href="https://github.com/KREONET/clabhost" target="_blank" rel="noopener noreferrer">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+          <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38
+          0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01
+          1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95
+          0-.87.31-1.59.82-2.15-.07-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27
+          2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82
+          1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01
+          2.2 0 .21.15.46.55.38A7.995 7.995 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+          <span>clabhost</span></a>
+        <a href="https://containerlab.dev" target="_blank" rel="noopener noreferrer">
+          <svg width="14" height="14" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+          <path d="M9 5.4S7.6 4 5.2 4H2.5v9.6h2.7C7.6 13.6 9 15 9 15s1.4-1.4 3.8-1.4h2.7V4h-2.7C10.4
+          4 9 5.4 9 5.4z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+          <path d="M9 5.4V15" stroke="currentColor" stroke-width="1.3"/></svg>
+          <span>containerlab</span></a>
+      </div>
+
+      <div class="me">
+        <span class="who" id="who"></span>
+        <a href="#" id="signout">
+          <svg width="14" height="14" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+          <path d="M10 3H4.5A1.5 1.5 0 0 0 3 4.5v9A1.5 1.5 0 0 0 4.5 15H10"
+          stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+          <path d="M7.5 9h7M12 6.5 14.5 9 12 11.5" stroke="currentColor" stroke-width="1.4"
+          stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span>Sign out</span></a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="stage">
+    <div class="bar">
+      <span id="crumb"></span>
+      <span class="spacer"></span>
+      <a id="popout" href="/clab/" target="_blank" rel="noopener">Open in a new tab</a>
+    </div>
+    <iframe id="frame" title="Selected application" src="about:blank"
+            allow="clipboard-read; clipboard-write"></iframe>
+    <div class="note" id="note">
+      <div>
+        <h2 id="noteTitle"></h2>
+        <p id="noteBody"></p>
+        <a class="btn" id="noteLink" href="/clab/" target="_blank" rel="noopener">
+          Open in a new tab</a>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script src="/apps.js"></script>
+<script>
+(function () {
+  var APPS = window.CLABHOST_APPS || [];
+
+  var shell   = document.getElementById('shell'),
+      nav     = document.getElementById('nav'),
+      toggle  = document.getElementById('toggle'),
+      frame   = document.getElementById('frame'),
+      crumb   = document.getElementById('crumb'),
+      popout  = document.getElementById('popout'),
+      note    = document.getElementById('note'),
+      noteT   = document.getElementById('noteTitle'),
+      noteB   = document.getElementById('noteBody'),
+      noteL   = document.getElementById('noteLink'),
+      who     = document.getElementById('who');
+
+  APPS.forEach(function (app) {
+    var a = document.createElement('a');
+    // A real href, so middle-click and ctrl-click open the app standalone
+    // instead of another copy of this shell.
+    a.href = app.path;
+    a.dataset.app = app.key;
+    a.innerHTML = app.icon +
+                  '<span class="label"></span>' +
+                  '<span class="dot" data-state="unknown"></span>';
+    a.querySelector('.label').textContent = app.name;
+    a.addEventListener('click', function (e) {
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+      e.preventDefault();
+      select(app.key, true);
+    });
+    nav.appendChild(a);
+  });
+
+  function select(key, push) {
+    var app = APPS.filter(function (a) { return a.key === key; })[0] || APPS[0];
+    if (!app) return;
+
+    nav.querySelectorAll('a').forEach(function (a) {
+      if (a.dataset.app === app.key) a.setAttribute('aria-current', 'page');
+      else a.removeAttribute('aria-current');
+    });
+
+    crumb.textContent = app.sub ? app.name + ' — ' + app.sub : app.name;
+    popout.href = app.path;
+    noteL.href = app.path;
+    note.dataset.show = 'false';
+    frame.src = app.path;
+
+    if (push) history.pushState({ app: app.key }, '', '/?app=' + app.key);
+    document.title = app.name + ' · clabhost';
+
+    // Deciding "the frame is empty" only after load. A timer alone misfires on
+    // an app whose bundle is still parsing, which looks identical to a blocked
+    // embed and sends you looking at headers for no reason.
+    clearTimeout(select._t);
+    select._seq = (select._seq || 0) + 1;
+    var token = select._seq;
+
+    frame.onload = function () {
+      if (token !== select._seq) return;      // switched apps in the meantime
+      clearTimeout(select._t);
+      var empty = false;
+      try {
+        var d = frame.contentDocument;
+        if (!d || !d.body || (d.body.childElementCount === 0 && !d.body.textContent.trim())) {
+          empty = true;
+        }
+      } catch (_) {
+        // Everything here is same-origin. If access is denied, something is wrong.
+        empty = true;
+      }
+      if (empty) explain(app, token); else note.dataset.show = 'false';
+    };
+
+    // Nothing loaded at all -- upstream never answered.
+    select._t = setTimeout(function () {
+      if (token === select._seq) explain(app, token);
+    }, 20000);
+  }
+
+  // An empty frame has two causes that look the same on screen: a proxy error
+  // (Caddy's 502 has an empty body) or a refused embed (200 plus a framing
+  // header). Fetching the same path and reading the status separates them --
+  // otherwise a firewall problem reads as a header problem.
+  function explain(app, token) {
+    fetch(app.path, { cache: 'no-store' })
+      .then(function (r) { return r.status; }, function () { return null; })
+      .then(function (status) {
+        if (token !== select._seq) return;
+        if (status === null) {
+          noteT.textContent = 'No response';
+          noteB.innerHTML = 'The request got no response. Check this path in the ' +
+                            'browser Network tab.';
+        } else if (status >= 500) {
+          noteT.textContent = 'Cannot reach the app';
+          noteB.innerHTML = 'Caddy could not dial the upstream. Check the dial error ' +
+                            'in <code>docker compose logs caddy</code>.';
+        } else if (status >= 400) {
+          noteT.textContent = 'The app returned ' + status;
+          noteB.innerHTML = 'Path routing may be off. Check the matching handle block ' +
+                            'in the Caddyfile.';
+        } else {
+          noteT.textContent = 'This app will not open in a frame';
+          noteB.innerHTML = 'The response was fine but the browser refused to embed it. ' +
+                            'Check <code>X-Frame-Options</code> and ' +
+                            '<code>Content-Security-Policy</code> on the response. ' +
+                            'It works in a new tab.';
+        }
+        note.dataset.show = 'true';
+      });
+  }
+
+  function probe() {
+    APPS.forEach(function (app) {
+      var dot = nav.querySelector('a[data-app="' + app.key + '"] .dot');
+      if (!dot) return;
+      fetch(app.ping, { redirect: 'manual', cache: 'no-store' })
+        .then(function (r) {
+          // A redirect or an auth challenge still means the app is answering.
+          // Only a gateway error counts as down.
+          var bad = r.status >= 502 && r.status <= 504;
+          dot.dataset.state = bad ? 'down' : 'up';
+          dot.title = bad ? 'HTTP ' + r.status : '';
+        })
+        .catch(function () { dot.dataset.state = 'down'; });
+    });
+  }
+
+  // Identity comes from the same session that Caddy's forward_auth checks, so
+  // asking the web app directly needs no extra endpoint.
+  fetch('/auth/me', { credentials: 'same-origin' })
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (me) {
+      if (!me || !me.authenticated) return;
+      var ep = (me.endpoints || []).filter(function (e) { return e.connected; })[0];
+      if (ep && ep.username) who.textContent = ep.username;
+    })
+    .catch(function () {});
+
+  document.getElementById('signout').addEventListener('click', function (e) {
+    e.preventDefault();
+    fetch('/auth/logout', { method: 'POST', credentials: 'same-origin' })
+      .catch(function () {})
+      .then(function () { window.location.href = '/login'; });
+  });
+
+  toggle.addEventListener('click', function () {
+    var collapsed = shell.dataset.collapsed !== 'true';
+    shell.dataset.collapsed = String(collapsed);
+    toggle.innerHTML = collapsed ? '&#187;' : '&#171;';
+    toggle.setAttribute('aria-expanded', String(!collapsed));
+    toggle.setAttribute('aria-label', collapsed ? 'Expand the rail' : 'Collapse the rail');
+  });
+
+  function keyFromUrl() {
+    var p = new URLSearchParams(location.search).get('app');
+    return APPS.some(function (a) { return a.key === p; }) ? p : (APPS[0] || {}).key;
+  }
+  window.addEventListener('popstate', function () { select(keyFromUrl(), false); });
+
+  // Fold Grafana's own mega menu.
+  //
+  // The rail on the left already is the app switcher, so Grafana's docked side
+  // menu is a second one taking up the pane. There is no URL parameter for this
+  // -- Grafana decides it at boot from localStorage:
+  //
+  //   megaMenuDocked = innerWidth >= xl && store.getBool('grafana.navigation.docked',
+  //                                                      innerWidth >= xl)
+  //
+  // so on a wide screen it defaults to docked. The portal and Grafana are the
+  // same origin, which means this *is* Grafana's localStorage and writing the
+  // key here is enough; no reaching into the frame.
+  //
+  // Set once per portal load rather than on every switch: dock it inside the
+  // frame and it stays docked while you are on this page. Note the value is
+  // shared with /grafana/ opened standalone -- one origin, one store.
+  try {
+    localStorage.setItem('grafana.navigation.docked', 'false');
+    localStorage.setItem('grafana.navigation.open', 'false');
+  } catch (_) {
+    // Private mode or storage disabled. Grafana falls back to its own default.
+  }
+
+  select(keyFromUrl(), false);
+  probe();
+  setInterval(probe, 30000);
+})();
+</script>
+</body>
+</html>

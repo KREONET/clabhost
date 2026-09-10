@@ -1,0 +1,163 @@
+<!doctype html>
+<!--
+  Sign-in page.
+
+  The stock containerlab-web form asks for an "API Endpoint" and a "Label"
+  because it is built to manage several remote clab-api-servers. A self-hosted
+  box has exactly one, so this page collects only what the user actually knows --
+  their server account -- and fills the endpoint in from /api/config.
+
+  It is plain same-origin JSON against the app's own endpoint, so the HttpOnly
+  clab_session cookie is issued exactly as the stock form would issue it:
+
+      POST /auth/login {url, username, password, sessionDuration}
+
+  Dark only, matching the portal and the apps behind it.
+
+  No framework and no external assets: this has to work on a host with no egress.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>clabhost</title>
+<link rel="icon" type="image/svg+xml" href="/containerlab.svg">
+<style>
+  :root {
+    --steel-900:#161c24; --steel-800:#1d252f; --steel-700:#2a3542;
+    --steel-400:#6b7d92;
+    --ink-100:#e6ecf2; --ink-300:#9fb0c2;
+    --signal:#3d9be9; --signal-hi:#2f83c9; --down:#d4674f;
+  }
+  * { box-sizing:border-box }
+  body {
+    margin:0; min-height:100vh; display:grid; place-items:center; padding:24px;
+    background:var(--steel-900); color:var(--ink-100);
+    font:15px/1.5 ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .card {
+    visibility:hidden;
+    width:min(92vw,380px); background:var(--steel-800);
+    border:1px solid var(--steel-700); border-radius:14px; padding:30px 28px 26px;
+    box-shadow:0 10px 40px rgba(0,0,0,.35);
+  }
+  .brand { display:grid; place-items:center; margin:0 0 26px }
+  .brand img { height:58px; width:auto }
+  .wordmark { margin:12px 0 0; font-size:17px; letter-spacing:.02em; font-weight:600;
+              text-align:center }
+
+  label { display:block; margin:0 0 6px; font-size:13px; font-weight:550 }
+  input {
+    width:100%; padding:10px 12px; margin:0 0 16px;
+    background:var(--steel-900); color:var(--ink-100);
+    border:1px solid var(--steel-700); border-radius:8px; font-size:15px;
+  }
+  input:focus { outline:2px solid var(--signal); outline-offset:-1px;
+                border-color:transparent }
+  button {
+    width:100%; padding:11px; border:0; border-radius:8px;
+    background:var(--signal); color:#fff; font-size:15px; font-weight:600; cursor:pointer;
+  }
+  button:hover:not(:disabled) { background:var(--signal-hi) }
+  button:disabled { opacity:.6; cursor:default }
+  .msg { min-height:20px; margin:14px 0 0; font-size:13px; color:var(--down);
+         text-align:center }
+</style>
+</head>
+<body>
+<main class="card" id="card">
+  <div class="brand">
+    <img src="/containerlab.svg" alt="">
+    <div class="wordmark">clabhost</div>
+  </div>
+
+  <form id="f" autocomplete="on">
+    <label for="u">Username</label>
+    <input id="u" name="username" autocomplete="username" autocapitalize="none"
+           spellcheck="false" required autofocus>
+
+    <label for="p">Password</label>
+    <input id="p" name="password" type="password" autocomplete="current-password" required>
+
+    <button id="b" type="submit">Sign in</button>
+  </form>
+
+  <p class="msg" id="m" role="status" aria-live="polite"></p>
+</main>
+
+<script>
+(function () {
+  var LANDING = '/';
+  var API_FALLBACK = 'http://127.0.0.1:8090';
+  var SESSION_DURATION = '24h';
+
+  var form = document.getElementById('f'),
+      btn  = document.getElementById('b'),
+      msg  = document.getElementById('m'),
+      card = document.getElementById('card'),
+      apiUrl = null;
+
+  function show() { card.style.visibility = 'visible'; }
+
+  // Do not present the form to someone who already has a session.
+  //
+  // Each POST /auth/login mints a fresh endpoint id and the app upserts by id,
+  // so a second sign-in *adds* a duplicate entry for the same server instead of
+  // replacing it, and the endpoint list then shows the same host several times.
+  // Sending an authenticated visitor on to the portal is what prevents that.
+  fetch('/auth/me', { credentials: 'same-origin' })
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (me) {
+      if (me && me.authenticated) { window.location.replace(LANDING); return; }
+      show();
+    })
+    .catch(show);
+
+  // The endpoint the stock form would have asked for. One request, no user input.
+  fetch('/api/config', { credentials: 'same-origin' })
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (c) { if (c && c.defaultClabApiUrl) apiUrl = c.defaultClabApiUrl; })
+    .catch(function () { /* falls back to the baked-in default below */ });
+
+  form.addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    msg.textContent = '';
+    btn.disabled = true;
+    btn.textContent = 'Signing in…';
+
+    fetch('/auth/login', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url: apiUrl || API_FALLBACK,
+        username: document.getElementById('u').value,
+        password: document.getElementById('p').value,
+        sessionDuration: SESSION_DURATION
+      })
+    })
+    .then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (body) {
+        if (r.ok && body.success) {
+          // A full navigation, not history.replaceState: the portal has to be
+          // fetched with the cookie that was just set.
+          window.location.replace(LANDING);
+          return;
+        }
+        throw new Error(body.error || ('Sign-in failed (HTTP ' + r.status + ')'));
+      });
+    })
+    .catch(function (e) {
+      msg.textContent = e.message || 'Sign-in failed';
+      btn.disabled = false;
+      btn.textContent = 'Sign in';
+      document.getElementById('p').value = '';
+      document.getElementById('p').focus();
+    });
+  });
+})();
+</script>
+</body>
+</html>

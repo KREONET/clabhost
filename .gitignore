@@ -1,0 +1,11 @@
+.env
+.DS_Store
+
+# Runtime state: certificates, the metric store, Grafana's database, the
+# extension set. Created by install.sh, not tracked. `git clean -xfd` deletes
+# it -- the ACME account key is in there. See docs/install.ko.md.
+/data/
+
+# Offline extension drop-in. The directory and its README are tracked; the
+# payload is not.
+code-server/vsix/*.vsix

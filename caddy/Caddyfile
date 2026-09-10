@@ -1,0 +1,157 @@
+{
+	# No domain, no certificate. Without this Caddy redirects :80 to a :443 site
+	# it cannot serve, and every request loops on 308.
+	#
+	# To put this behind TLS, replace the `:{$HTTP_PORT:80}` site address below
+	# with your hostname and drop this line. See docs/tls.ko.md.
+	auto_https off
+	# Turning off the admin API means `caddy reload` does not work. After editing
+	# this file run `docker compose restart caddy`.
+	admin off
+}
+
+:{$HTTP_PORT:80} {
+	encode zstd gzip
+
+	# The portal frames the apps from this same origin. Upstreams that ship
+	# X-Frame-Options or their own CSP would break that, so the value is stripped
+	# per-proxy (header_down, below) and re-set once here.
+	header {
+		-X-Frame-Options
+		Content-Security-Policy "frame-ancestors 'self'"
+	}
+
+	# Bare prefixes. Caddy evaluates redir before handle, so these run first.
+	#
+	# /code in particular must keep its query: code-server answers with a relative
+	# "./?folder=..." which the client resolves back to /code?folder=..., and
+	# dropping the query here would bounce it around forever.
+	@code_bare path /code
+	redir @code_bare /code/?{query} 308
+	redir /clab /clab/ 308
+	redir /grafana /grafana/ 308
+
+	# Sign-in page. The stock containerlab-web form asks for an API endpoint and a
+	# label because it manages several remote servers; a self-hosted box has one.
+	handle /login {
+		root * /srv/www
+		rewrite * /login.html
+		file_server
+	}
+
+	# Browser editor. One instance, one socket -- see README on why this host is
+	# single-user.
+	handle_path /code/* {
+		# route evaluates in written order. Without it Caddy applies its own
+		# directive ordering, the matcher runs before forward_auth, and every
+		# request is a 403.
+		route {
+			# Never trust an identity header from the client.
+			request_header -X-Auth-User
+			forward_auth 127.0.0.1:9099 {
+				uri /auth
+			}
+			reverse_proxy unix//srv/sock/ide.sock {
+				header_down -X-Frame-Options
+				header_down -Content-Security-Policy
+			}
+		}
+	}
+
+	# handle, not handle_path: with GF_SERVER_SERVE_FROM_SUB_PATH=true Grafana
+	# expects to receive the /grafana prefix and builds its own URLs from it.
+	# Stripping the prefix makes it 301 to the same path forever.
+	handle /grafana* {
+		route {
+			request_header -X-Auth-User
+			forward_auth 127.0.0.1:9099 {
+				uri /auth
+				copy_headers X-Auth-User
+			}
+			reverse_proxy unix//srv/sock/grafana/grafana.sock {
+				header_down -X-Frame-Options
+				header_down -Content-Security-Policy
+			}
+		}
+	}
+
+	# The portal's menu declaration. Same gate as the portal that loads it.
+	handle /apps.js {
+		route {
+			forward_auth 127.0.0.1:9099 {
+				uri /auth
+			}
+			root * /srv/www
+			file_server
+		}
+	}
+
+	# The portal shell owns exactly one path. Everything it does not claim falls
+	# through to containerlab-web at the bottom of this file, which is what makes
+	# /clab/ work at all -- see the note there.
+	@portal path /
+	handle @portal {
+		route {
+			forward_auth 127.0.0.1:9099 {
+				uri /auth
+			}
+			root * /srv/www
+			rewrite * /index.html
+			file_server
+		}
+	}
+
+	# containerlab-web without the portal chrome.
+	#
+	# The app is a Vite SPA and every path inside it is root-absolute:
+	# /assets/main-<hash>.js, /api/*, /events, /auth/*, /files. It has no notion
+	# of a base path, so it cannot be relocated under a prefix.
+	#
+	# What makes /clab/ work is that the prefix is only stripped for the document
+	# request, and the fallback for everything unmatched is the same upstream:
+	# index.html comes from here, and the root-absolute paths it then asks for
+	# are served by the last handle block. Enumerating those paths in a matcher
+	# would work too, but it would need updating whenever the app adds one.
+	#
+	# The precondition is that the app does no client-side path routing, so the
+	# document does not care that it was loaded from /clab/. Checked against the
+	# bundles: no router, no history or pathname handling. If that changes, move
+	# the portal to /portal and give / back to containerlab-web.
+	handle_path /clab/* {
+		route {
+			forward_auth 127.0.0.1:9099 {
+				uri /auth
+			}
+			reverse_proxy 127.0.0.1:3001 {
+				header_down -X-Frame-Options
+				header_down -Content-Security-Policy
+			}
+		}
+	}
+
+	# Fallback: SPA bundles, /api/*, /events, /files and /auth/*.
+	#
+	# Deliberately not gated. /auth/login is how a session is obtained in the
+	# first place, and the rest is protected by containerlab-web's own session
+	# check -- putting forward_auth in front would only turn its 401s into
+	# redirects that the SPA cannot parse.
+	handle {
+		reverse_proxy 127.0.0.1:3001 {
+			header_down -X-Frame-Options
+			header_down -Content-Security-Policy
+		}
+	}
+
+	handle_errors {
+		# The editor socket is not there yet: clabhost-code.service is not
+		# running, or install.sh has not been run on this host at all. The web UI
+		# and Grafana do not depend on it, so only /code lands here.
+		@ide_down expression `{err.status_code} in [502, 503] && {http.request.orig_uri.path}.startsWith("/code/")`
+		handle @ide_down {
+			root * /srv/www
+			rewrite * /starting.html
+			file_server
+		}
+		respond "{err.status_code} {err.status_text}" {err.status_code}
+	}
+}

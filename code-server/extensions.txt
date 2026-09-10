@@ -1,0 +1,44 @@
+# Extensions pre-installed into the editor.
+#
+# code-server resolves extensions through Open VSX (open-vsx.org), not the
+# Microsoft marketplace. Check that an entry exists before adding it:
+#   curl -s -o /dev/null -w '%{http_code}\n' https://open-vsx.org/api/<namespace>/<name>
+#
+# EXT_SET in .env decides how far down this file the seeding goes.
+#   minimal : what containerlab work needs
+#   network : + device configs, diagrams, python, operational tooling
+#   full    : + LLM assistants (default)
+
+# --- SET minimal ---
+# The containerlab extension: topology tree, deploy/destroy, node attach, graph.
+# It shells out to the containerlab CLI, which is why the editor container has
+# the host binary mounted. https://containerlab.dev/manual/gui/vsc-extension
+srl-labs.vscode-containerlab
+# Schema validation and completion for .clab.yml. Pairs with yaml.schemas in
+# settings.json.
+redhat.vscode-yaml
+
+# --- SET network ---
+# Device config syntax and language server. Bound to *.cfg and *startup-config*
+# by files.associations in settings.json.
+y-ysss.cisco-config-highlight
+aswertus.cisco-ios-lsp
+# Topology diagrams. drawio-diagrams-editor pulls vscode-drawio in as a
+# dependency; both are listed so the versions are pinned by this file.
+hediet.vscode-drawio
+electropol-fr.drawio-diagrams-editor
+# Python. Pylance is proprietary and absent from Open VSX, so basedpyright
+# supplies IntelliSense. Leaving it out gives you an extension that is installed
+# but silently has no completion, which is hard to diagnose.
+ms-python.python
+detachhead.basedpyright
+charliermarsh.ruff
+# Lab scripts and container work.
+docker.docker
+eamodio.gitlens
+
+# --- SET full ---
+# LLM assistants. Each needs its own API key or sign-in.
+Anthropic.claude-code
+Continue.continue
+saoudrizwan.claude-dev

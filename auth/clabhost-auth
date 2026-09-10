@@ -1,0 +1,145 @@
+#!/usr/bin/env python3
+"""clabhost-auth -- turn a containerlab-web session into a Caddy forward_auth header.
+
+Flow:
+  Caddy /, /clab, /code, /grafana -> forward_auth -> here
+    1. take clab_session out of the request's Cookie header, nothing else
+    2. ask the web app GET /auth/me with just that cookie
+    3. if the session is authenticated and the connected endpoint carries a
+       usable account name, answer 200 + "X-Auth-User: <username>"
+    4. otherwise 401 (302 to the login page for browser navigation)
+
+One sign-in to the web UI therefore covers /code and /grafana as well. This
+process never handles a password, so it needs no privileges.
+"""
+
+import json
+import os
+import re
+import sys
+import time
+import urllib.error
+import urllib.request
+from http.cookies import SimpleCookie
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+WEB_URL = os.environ.get("CLAB_WEB_URL", "http://127.0.0.1:3001")
+LISTEN_HOST = os.environ.get("SHIM_HOST", "127.0.0.1")
+LISTEN_PORT = int(os.environ.get("SHIM_PORT", "9099"))
+CACHE_TTL = float(os.environ.get("SHIM_CACHE_TTL", "5"))
+HTTP_TIMEOUT = float(os.environ.get("SHIM_TIMEOUT", "5"))
+LOGIN_REDIRECT = os.environ.get("SHIM_LOGIN_REDIRECT", "/login")
+SESSION_COOKIE = "clab_session"
+
+# The name is passed to Grafana as an identity, so it is validated rather than
+# forwarded as-is. Anchoring the first character to alphanumeric or underscore
+# rules out '.', '..' and a leading '-'; dots and hyphens are allowed after it so
+# that accounts like 'kim.minsu' still work.
+USERNAME_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,31}$")
+
+# sid -> (expiry, username or None). A short cache; without it every SPA asset
+# request would turn into its own /auth/me round trip.
+_cache: "dict[str, tuple[float, str | None]]" = {}
+
+
+def log(msg: str) -> None:
+    print(msg, file=sys.stderr, flush=True)
+
+
+def extract_sid(cookie_header: "str | None") -> "str | None":
+    if not cookie_header:
+        return None
+    jar = SimpleCookie()
+    try:
+        jar.load(cookie_header)
+    except Exception:
+        return None
+    morsel = jar.get(SESSION_COOKIE)
+    if morsel is None:
+        return None
+    return morsel.value.strip() or None
+
+
+def resolve_username(sid: str) -> "str | None":
+    now = time.monotonic()
+    hit = _cache.get(sid)
+    if hit and hit[0] > now:
+        return hit[1]
+
+    req = urllib.request.Request(
+        f"{WEB_URL}/auth/me",
+        headers={"Cookie": f"{SESSION_COOKIE}={sid}", "Accept": "application/json"},
+        method="GET",
+    )
+    username = None
+    try:
+        with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as resp:
+            data = json.loads(resp.read().decode("utf-8", "replace"))
+        if data.get("authenticated") is True:
+            for endpoint in data.get("endpoints") or []:
+                if not endpoint.get("connected"):
+                    continue
+                candidate = (endpoint.get("username") or "").strip()
+                if USERNAME_RE.fullmatch(candidate):
+                    username = candidate
+                    break
+    except urllib.error.URLError as exc:
+        # The web app may be restarting. Do not cache a failure -- answer 401 now
+        # and let the next request try again.
+        log(f"auth/me unreachable: {exc}")
+        return None
+    except Exception as exc:
+        log(f"auth/me parse failed: {exc}")
+        return None
+
+    _cache[sid] = (now + CACHE_TTL, username)
+    if len(_cache) > 4096:
+        for key in [k for k, v in _cache.items() if v[0] <= now]:
+            _cache.pop(key, None)
+    return username
+
+
+class Handler(BaseHTTPRequestHandler):
+    server_version = "clabhost-auth"
+    protocol_version = "HTTP/1.1"
+
+    def _finish(self, code: int, user: "str | None" = None) -> None:
+        # forward_auth copies a non-2xx response straight through to the client,
+        # so a browser navigation gets the login page instead of a bare 401.
+        if code == 401 and "text/html" in (self.headers.get("Accept") or ""):
+            self.send_response(302)
+            self.send_header("Location", LOGIN_REDIRECT)
+        else:
+            self.send_response(code)
+        if user:
+            self.send_header("X-Auth-User", user)
+        self.send_header("Content-Length", "0")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+
+    def do_GET(self) -> None:
+        if self.path.rstrip("/") == "/healthz":
+            self._finish(200)
+            return
+        sid = extract_sid(self.headers.get("Cookie"))
+        user = resolve_username(sid) if sid else None
+        self._finish(200, user) if user else self._finish(401)
+
+    # forward_auth sends GET; the rest are handled the same way defensively.
+    do_HEAD = do_GET
+    do_POST = do_GET
+
+    def log_message(self, fmt: str, *args) -> None:
+        # Caddy writes the access log.
+        pass
+
+
+def main() -> None:
+    server = ThreadingHTTPServer((LISTEN_HOST, LISTEN_PORT), Handler)
+    server.daemon_threads = True
+    log(f"clabhost-auth listening on {LISTEN_HOST}:{LISTEN_PORT}, web={WEB_URL}")
+    server.serve_forever()
+
+
+if __name__ == "__main__":
+    main()

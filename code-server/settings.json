@@ -1,0 +1,21 @@
+{
+  "yaml.schemas": {
+    "https://raw.githubusercontent.com/srl-labs/containerlab/main/schemas/clab.schema.json": [
+      "*.clab.yml",
+      "*.clab.yaml"
+    ]
+  },
+  "files.associations": {
+    "*startup-config*": "cisco",
+    "*.cfg": "cisco",
+    "*.partial": "cisco"
+  },
+  "editor.tabSize": 2,
+  "yaml.format.enable": true,
+  "python.languageServer": "None",
+  "basedpyright.analysis.typeCheckingMode": "standard",
+  "workbench.startupEditor": "readme",
+  "telemetry.telemetryLevel": "off",
+  "update.mode": "none",
+  "extensions.autoCheckUpdates": false
+}

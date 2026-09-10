@@ -1,0 +1,167 @@
+# clabhost -- web UI and monitoring in front of a containerlab host.
+#
+# containerlab, clab-api-server and the browser editor are installed on the host
+# itself; install.sh does that. This file is the web layer only.
+#
+# The editor is deliberately not here. Its whole point is a terminal that is the
+# host -- sudo, the host's tools, netem on a lab node -- and a container gives
+# you the container's filesystem instead. Caddy reaches it over a unix socket,
+# so from the proxy's side there is no difference. See docs/install.ko.md.
+#
+# Only one port is published: caddy's 80. Labs routinely claim host ports
+# (srl-telemetry-lab takes 3000 and 9090), so Grafana talks over a unix socket
+# and the rest sits on an internal bridge.
+#
+# There are no named volumes. Everything durable lives under DATA_DIR as a plain
+# directory you can list, back up with tar, and move to another disk by changing
+# one setting. install.sh creates the tree with the right owners -- a bind mount
+# does not inherit ownership from the image the way a fresh named volume does.
+name: clabhost
+
+services:
+  caddy:
+    image: ${IMG_CADDY:-caddy:2-alpine}
+    container_name: clabhost-caddy
+    restart: unless-stopped
+    # host networking: clab-api-server (8090) and containerlab-web (3001) run
+    # natively, so 127.0.0.1 reaches them directly. On a bridge, traffic to the
+    # host hits ufw's default incoming deny and needs a per-subnet rule.
+    network_mode: host
+    environment:
+      HTTP_PORT: ${HTTP_PORT:-80}
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./www:/srv/www:ro
+      # Grafana's and the editor's sockets. Read-only: Caddy only ever connects.
+      - ${SOCKET_DIR:-/run/clabhost}:/srv/sock:ro
+      # ACME account key and certificates. Mode 0700 -- see docs/tls.ko.md.
+      - ${DATA_DIR:-/opt/clabhost/data}/caddy/data:/data
+      - ${DATA_DIR:-/opt/clabhost/data}/caddy/config:/config
+    depends_on: [web, auth]
+
+  web:
+    image: ${IMG_WEB:-ghcr.io/srl-labs/containerlab-web:latest}
+    container_name: clabhost-web
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      PORT: 3001
+      WEB_TLS_ENABLE: "false"
+      CLAB_API_URL: ${CLAB_API_URL:-http://127.0.0.1:8090}
+
+  # Translates the web app's login session into a header Caddy's forward_auth
+  # can use. It never sees a password, so it needs no privileges.
+  auth:
+    image: ${IMG_PYTHON:-python:3-alpine}
+    container_name: clabhost-auth
+    restart: unless-stopped
+    network_mode: host
+    command: ["python3", "/app/clabhost-auth"]
+    environment:
+      CLAB_WEB_URL: http://127.0.0.1:3001
+      SHIM_PORT: "9099"
+      SHIM_LOGIN_REDIRECT: /login
+    volumes:
+      - ./auth/clabhost-auth:/app/clabhost-auth:ro
+
+  grafana:
+    image: ${IMG_GRAFANA:-grafana/grafana:13.0.1}
+    container_name: clabhost-grafana
+    restart: unless-stopped
+    environment:
+      # A unix socket rather than a port: labs commonly publish 3000
+      # (srl-telemetry-lab does) and a bound host port would collide.
+      #
+      # The socket goes in the shared socket directory, not in Grafana's data
+      # directory. Keeping it here is what lets Caddy reach it without mounting
+      # the data directory -- which would also hand it grafana.db.
+      GF_SERVER_PROTOCOL: socket
+      GF_SERVER_SOCKET: /sock/grafana/grafana.sock
+      GF_SERVER_SOCKET_MODE: "0660"
+      GF_SERVER_ROOT_URL: "%(protocol)s://%(domain)s/grafana/"
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      # The portal shell frames Grafana from the same origin.
+      GF_SECURITY_ALLOW_EMBEDDING: "true"
+      # Identity comes from the same shim that guards /code, so one login is enough.
+      GF_AUTH_PROXY_ENABLED: "true"
+      GF_AUTH_PROXY_HEADER_NAME: X-Auth-User
+      GF_AUTH_PROXY_HEADER_PROPERTY: username
+      GF_AUTH_PROXY_AUTO_SIGN_UP: "true"
+      GF_AUTH_PROXY_HEADERS: ""
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_AUTH_BASIC_ENABLED: "false"
+      GF_USERS_AUTO_ASSIGN_ORG_ROLE: Editor
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+    volumes:
+      # Owned by uid 472 -- the image runs as that and a bind mount starts out
+      # root-owned. install.sh chowns it.
+      - ${DATA_DIR:-/opt/clabhost/data}/grafana:/var/lib/grafana
+      - ${SOCKET_DIR:-/run/clabhost}:/sock
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/etc/grafana/dashboards:ro
+    networks: [internal]
+    depends_on: [prometheus]
+
+  prometheus:
+    image: ${IMG_PROMETHEUS:-quay.io/prometheus/prometheus:v3.11.3}
+    container_name: clabhost-prometheus
+    restart: unless-stopped
+    user: root
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROM_RETENTION:-30d}
+      - --storage.tsdb.retention.size=${PROM_MAX_SIZE:-8GB}
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ${DATA_DIR:-/opt/clabhost/data}/prometheus:/prometheus
+    networks: [internal]
+    depends_on: [node-exporter, cadvisor]
+
+  node-exporter:
+    image: ${IMG_NODE_EXPORTER:-quay.io/prometheus/node-exporter:v1.12.1}
+    container_name: clabhost-node-exporter
+    restart: unless-stopped
+    pid: host
+    command:
+      - --path.rootfs=/host
+      - --path.procfs=/host/proc
+      - --path.sysfs=/host/sys
+      - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|run/docker|var/lib/docker/.+)($$|/)
+    volumes:
+      - /:/host:ro,rslave
+    networks: [internal]
+
+  cadvisor:
+    image: ${IMG_CADVISOR:-gcr.io/cadvisor/cadvisor:v0.55.1}
+    container_name: clabhost-cadvisor
+    restart: unless-stopped
+    privileged: true
+    devices:
+      - /dev/kmsg
+    command:
+      # Labs create and destroy namespaces constantly. Without per-container
+      # scoping the rest is noise that accumulates for the whole retention window.
+      - --docker_only=true
+      - --store_container_labels=false
+      - --whitelisted_container_labels=containerlab,clab-owner,clab-node-kind
+      - --housekeeping_interval=15s
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    networks: [internal]
+
+networks:
+  internal:
+    # Pinned. Docker's automatic allocation walks up in /16 steps from 172.17,
+    # and the fourth network lands on 172.20.0.0/16 -- which swallows
+    # containerlab's default management range 172.20.20.0/24.
+    # See docs/addressing.ko.md.
+    ipam:
+      config:
+        - subnet: ${INTERNAL_SUBNET:-172.30.255.0/24}

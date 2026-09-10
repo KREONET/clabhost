@@ -1,0 +1,32 @@
+<!doctype html>
+<!--
+  Shown when /code cannot reach the editor socket. On a first start this is the
+  extension seeding step, which takes a couple of minutes; the page refreshes
+  itself until the socket appears.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta http-equiv="refresh" content="5">
+<title>Preparing the editor</title>
+<style>
+  :root { --steel-900:#161c24; --ink-100:#e6ecf2; --steel-400:#6b7d92 }
+  body { margin:0; min-height:100vh; display:grid; place-items:center;
+         background:var(--steel-900); color:var(--ink-100);
+         font:15px/1.6 ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif;
+         text-align:center; padding:24px; -webkit-font-smoothing:antialiased }
+  h1 { margin:0 0 8px; font-size:17px; font-weight:600 }
+  p { margin:0 0 4px; color:var(--steel-400); font-size:13.5px }
+  code { font:12.5px ui-monospace,SFMono-Regular,Menlo,monospace }
+</style>
+</head>
+<body>
+  <div>
+    <h1>Preparing the editor</h1>
+    <p>On a first start the extensions are still downloading. This takes a few minutes.</p>
+    <p>Follow along with <code>journalctl -u clabhost-code -f</code></p>
+  </div>
+</body>
+</html>

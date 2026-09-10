@@ -1,0 +1,45 @@
+# The browser editor, installed on the host rather than in a container.
+#
+# install.sh renders the @PLACEHOLDER@ values into
+# /etc/systemd/system/clabhost-code.service. Edit that copy for a one-off
+# change; edit this template and re-run install.sh to make it stick.
+#
+# It listens on a unix socket, not a port. Labs claim host ports, and Caddy
+# reaches the socket through the same directory it uses for Grafana's.
+[Unit]
+Description=clabhost browser editor (code-server)
+Documentation=https://github.com/kreonet/clabhost
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=@USER@
+Group=@GROUP@
+Environment=HOME=@HOME@
+WorkingDirectory=@HOME@
+
+# '+' runs as root: /run is root-owned, so the service user cannot create its
+# own directory there. tmpfiles.d recreates it on boot; this covers a manual
+# start after someone removed it.
+ExecStartPre=+/usr/bin/install -d -o @USER@ -g @GROUP@ -m 0755 @SOCKET_DIR@
+# A service that was killed rather than stopped leaves the socket behind, and
+# bind then fails.
+ExecStartPre=-/bin/rm -f @SOCKET_DIR@/ide.sock
+
+ExecStart=@CODE_SERVER@ \
+    --auth none \
+    --socket @SOCKET_DIR@/ide.sock \
+    --socket-mode 0660 \
+    --abs-proxy-base-path /code \
+    --extensions-dir @DATA_DIR@/code-server/extensions \
+    --user-data-dir @DATA_DIR@/code-server/user-data \
+    --disable-telemetry \
+    --disable-update-check \
+    @HOME@/clab
+
+ExecStopPost=-/bin/rm -f @SOCKET_DIR@/ide.sock
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

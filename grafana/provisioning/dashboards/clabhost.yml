@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: clabhost
+    type: file
+    # The dashboard is part of the repository, so editing it in the UI would be
+    # overwritten on the next restart. Copy it to a new dashboard instead.
+    allowUiUpdates: false
+    options:
+      path: /etc/grafana/dashboards
+      foldersFromFilesStructure: false
