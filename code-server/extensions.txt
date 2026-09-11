@@ -35,13 +35,22 @@ codeout.vscode-junos
 TIKOCI.lsp-routeros-ts
 #
 # Searched Open VSX and found nothing for Arista EOS, SONiC, VyOS, FRR, Cisco
-# NX-OS, Huawei, Palo Alto or Fortinet. If one appears, add it here rather than
-# installing it by hand -- see docs/install.ko.md on why the list is the source
-# of truth.
-#
-# YANG and NETCONF are not config syntax but come up in the same work:
-#   typefox.yang-vscode   YANG model editor and diagrams
-#   k19.netconf           NETCONF/YANG language server
+# NX-OS, Huawei, Palo Alto or Fortinet -- several phrasings, no hits. Anything
+# for those on the Microsoft marketplace is out of reach: code-server resolves
+# extensions through Open VSX. EOS and FRR are close enough to IOS that the
+# Cisco highlighter covers them once files.associations maps their filenames.
+# If one does appear, add it here rather than installing it by hand -- the list
+# is what an air-gapped host and a rebuilt host both get.
+
+# YANG models, for gNMI and NETCONF work rather than device configs.
+typefox.yang-vscode
+# SNMP MIBs.
+golangsnmp.gomib-vscode
+# The host's own files -- sshd_config, iptables, systemd units, /etc/hosts,
+# fstab, interfaces. The editor terminal is the host, so these get edited here.
+CyberBookAS.system-syntax
+# CSV and TSV: interface lists, address plans, anything pasted out of a report.
+mechatroner.rainbow-csv
 # Topology diagrams. drawio-diagrams-editor pulls vscode-drawio in as a
 # dependency; both are listed so the versions are pinned by this file.
 hediet.vscode-drawio
