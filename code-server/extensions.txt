@@ -19,10 +19,29 @@ srl-labs.vscode-containerlab
 redhat.vscode-yaml
 
 # --- SET network ---
-# Device config syntax and language server. Bound to *.cfg and *startup-config*
-# by files.associations in settings.json.
+# Device config syntax and language servers, one per vendor.
+#
+# Cisco. Bound to *.cfg and *startup-config* by files.associations in
+# settings.json. Arista EOS and FRR configs are close enough to IOS that this
+# highlights them too if you map their filenames the same way.
 y-ysss.cisco-config-highlight
 aswertus.cisco-ios-lsp
+# Nokia SR Linux and SR OS. From srl-labs, same authors as containerlab, and
+# SR Linux is the NOS in most of the official examples.
+srl-labs.sr-vscode
+# Juniper Junos.
+codeout.vscode-junos
+# MikroTik RouterOS, for the mikrotik_ros kind.
+TIKOCI.lsp-routeros-ts
+#
+# Searched Open VSX and found nothing for Arista EOS, SONiC, VyOS, FRR, Cisco
+# NX-OS, Huawei, Palo Alto or Fortinet. If one appears, add it here rather than
+# installing it by hand -- see docs/install.ko.md on why the list is the source
+# of truth.
+#
+# YANG and NETCONF are not config syntax but come up in the same work:
+#   typefox.yang-vscode   YANG model editor and diagrams
+#   k19.netconf           NETCONF/YANG language server
 # Topology diagrams. drawio-diagrams-editor pulls vscode-drawio in as a
 # dependency; both are listed so the versions are pinned by this file.
 hediet.vscode-drawio
